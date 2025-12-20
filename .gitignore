@@ -1,0 +1,21 @@
+# Ignore certificate files and cert directory
+cert/
+*.pem
+*.key
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Go build / vendor
+bin/
+vendor/
+*.exe
+*.test
+
+# Environment
+.env
+
+# IDE
+.vscode/
+.idea/
