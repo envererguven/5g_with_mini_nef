@@ -46,10 +46,11 @@ configuration:
     upNodes: # information of userplane node (AN or UPF)
       gNB1: # the name of the node
         type: AN # the type of the node (AN or UPF)
+        anIp: 172.18.2.30 # gNB N3 IP
       UPF: # the name of the node
         type: UPF # the type of the node (AN or UPF)
-        nodeID: upf.free5gc.org # the Node ID of this UPF
-        addr: upf.free5gc.org # the IP/FQDN of N4 interface on this UPF (PFCP)
+        nodeID: 172.18.3.20 # eUPF N4 IP
+        addr: 172.18.3.20 # eUPF N4 IP
         sNssaiUpfInfos: # S-NSSAI information list for this UPF
           - sNssai: # S-NSSAI (Single Network Slice Selection Assistance Information)
               sst: 1 # Slice/Service Type (uinteger, range: 0~255)
@@ -72,7 +73,7 @@ configuration:
         interfaces: # Interface list for this UPF
           - interfaceType: N3 # the type of the interface (N3 or N9)
             endpoints: # the IP address of this N3/N9 interface on this UPF
-              - upf.free5gc.org
+              - 172.18.2.20 # eUPF N3 IP
             networkInstances: # Data Network Name (DNN)
               - internet
     links: # the topology graph of userplane, A and B represent the two nodes of each link

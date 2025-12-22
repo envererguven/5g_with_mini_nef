@@ -1,108 +1,170 @@
-# Free5GC Deployment Guide for Windows 11 (WSL2)
+# Free5GC Deployment Guide (eUPF + Advanced Networking)
 
-This guide helps you deploy the free5GC Core Network.
-**Note:** The deployment is split into two phases due to WSL2 kernel dependencies.
+This guide deploys a 5G Core Network using **eUPF** (eBPF-based UPF), eliminating the need for custom kernel modules.
 
-## Phase 1: Control Plane Deployment (Current)
+## Architecture
+*   **Core**: free5GC (AMF, SMF, etc.)
+*   **User Plane**: eUPF (ghcr.io/edgecomllc/eupf)
+*   **RAN**: UERANSIM (gNB + UE)
+*   **Monitoring**: Netshoot container attached to eUPF
 
-This phase deploys the management and control NFs (AMF, SMF, NRF, WebUI, etc.).
-**Expected Outcome:** All containers *except* UPF will run. You can access the WebUI.
+## Prerequisites
+*   Windows 11 + Docker Desktop (WSL2 backend)
+*   **No** custom kernel compilation required!
 
-### Step 1: Start the Network
+## Step 1: Start the Network
 
-1.  Open **PowerShell** as Administrator.
-2.  Navigate to the project folder:
+1.  **Clean up old containers** (if any):
     ```powershell
-    cd C:\Users\PCUser\.gemini\antigravity\scratch\free5gc_project
+    docker-compose down -v
     ```
-3.  Run Docker Compose:
+
+2.  **Start the new stack**:
     ```powershell
     docker-compose up -d
     ```
 
-### Step 2: Verify Control Plane
-
-1.  Check container status:
+3.  **Verify Status**:
     ```powershell
     docker-compose ps
     ```
-    *   **Success**: `nrf`, `amf`, `smf`, `udm`, `udr`, `pcf`, `ausf`, `nssf`, `chf`, `webui`, `db` should be **Up**.
-    *   **Expected Failure**: `upf` may be `Restarting` or `Exited` because the `gtp5g` module is missing. **Ignore this for now.**
+    *   Ensure `eupf`, `amf`, `smf`, `ueransim-gnb` are **Up**.
 
-2.  Access the WebUI:
-    *   URL: [http://localhost:5000](http://localhost:5000)
-    *   User: `admin`
-    *   Pass: `free5gc`
+## Step 2: Verify Control Plane
 
-### Step 3: Test UE Registration (Control Plane)
+1.  Access WebUI: [http://localhost:5000](http://localhost:5000) (admin/free5gc).
+2.  Check "Network Functions": You should see AMF, SMF, UPF (eUPF), etc. registered.
 
-1.  **Start the UERANSIM container**:
+## Step 3: Verify User Plane (Ping Test)
+
+1.  **Register the UE**:
     ```powershell
-    docker-compose up -d ueransim
+    docker exec -it ueransim-ue ./nr-ue -c ./config/uecfg.yaml
     ```
+    *   Expected: `[NAS] Registration accept` and `[NAS] PDU session establishment accept`.
 
-2.  **Monitor the gNodeB logs** to ensure it connects to the AMF:
+2.  **Test Connectivity**:
+    In the UE terminal (or a new one):
     ```powershell
-    docker-compose logs -f ueransim
+    docker exec -it ueransim-ue ping -I uesimtun0 8.8.8.8
     ```
-    *   Look for: `[GNB] SCTP connection established with AMF` and `NG Setup accepted`.
-    *   Press `Ctrl+C` to exit logs.
+    *   **Success**: You should see ping replies!
 
-3.  **Register a UE**:
-    Open a new terminal and run:
-    ```powershell
-    docker exec -it ueransim ./nr-ue -c ./config/uecfg.yaml
-    ```
+## Step 4: Network Monitoring
 
-4.  **Expected Output**:
-    *   ✅ **Registration**: You should see `[NAS] Registration accept`.
-    *   ❌ **PDU Session**: You will likely see `[NAS] PDU session establishment reject` or timeouts because the UPF is not running (Phase 2 deferred).
-    *   **WebUI**: Check the "Subscribers" tab in the WebUI to see the connected UE status.
+The `network-monitor` container is attached to the `eupf` service, giving you visibility into N3 (GTP), N4 (PFCP), and N6 (Internet) traffic.
 
-### Step 4: Access MongoDB
-
-You can connect to the database using a GUI tool (like MongoDB Compass) or CLI.
-
-*   **Connection String**: `mongodb://localhost:27017`
-*   **Database Name**: `free5gc`
-*   **Username**: *(None / Leave empty)*
-*   **Password**: *(None / Leave empty)*
-
-> **Note**: If you cannot connect, ensure you applied the latest changes by running `docker-compose up -d`.
-
-### Step 5: Traffic Capture (tcpdump)
-
-To capture traffic from a specific Network Function (e.g., AMF, SMF) without installing tools inside it, use a **sidecar container**.
-
-**Command:**
+**Capture Traffic:**
 ```powershell
-# Syntax: docker run --rm --net container:<container_name> -v ${PWD}/capture:/data nicolaka/netshoot tcpdump -i any -w /data/<filename>.pcap
+# Capture all traffic on N3 interface (GTP-U)
+docker exec -it network-monitor tcpdump -i n3 -nn
 
-# Example: Capture AMF traffic
-docker run --rm --net container:amf -v ${PWD}/capture:/data nicolaka/netshoot tcpdump -i any -w /data/amf.pcap
+# Capture PFCP traffic on N4
+docker exec -it network-monitor tcpdump -i n4 port 8805
+
+# Save capture to file (inside container)
+docker exec -it network-monitor tcpdump -i any -w /tmp/capture.pcap
 ```
 
-1.  Run the command in a separate terminal.
-2.  Perform your tests (e.g., register UE).
-3.  Press `Ctrl+C` to stop the capture.
-4.  The `.pcap` file will be saved in a `capture` folder in your project directory. You can open it with Wireshark.
+## Step 5: Northbound API (Mini-NEF)
 
----
+The **Mini-NEF** exposes a simple REST API to resolve IP addresses to MSISDNs.
+*Note: Due to a missing BSF Docker image, this service currently uses a fallback mechanism (Mock/Direct DB) to simulate the resolution.*
 
-## Phase 2: User Plane Enablement (Deferred)
+> [!TIP]
+> **New:** API Documentation (Swagger UI) is available at [http://localhost:9090/apidocs](http://localhost:9090/apidocs).
 
-**Goal:** Enable the UPF for actual data traffic.
-**Requirement:** Install `gtp5g` kernel module in WSL2.
+1.  **Start Services**:
+    ```powershell
+    docker-compose up -d mini-nef
+    ```
 
-> **Status:** This step is currently deferred due to WSL2 kernel compilation complexity.
+2.  **Verify Service is Running**:
+    Open browser or curl the root to see the Welcome message:
+    ```powershell
+    curl.exe "http://localhost:9090/"
+    ```
 
-### Future Steps to Enable UPF:
-1.  Resolve WSL2 kernel header issues (requires matching source code).
-2.  Compile and install `gtp5g` in the WSL2 environment.
-3.  Restart the UPF container: `docker-compose restart upf`.
+3.  **Provision Sample Subscriber**:
+    Run the provisioning script to insert the test MSISDN (1234567890) into the Core:
+    ```powershell
+    python provision_subscriber.py
+    ```
 
----
+4.  **Test the API (with JSON Prettify)**:
+    In PowerShell, pipe the output to format it nicely:
+    ```powershell
+    curl.exe "http://localhost:9090/identity?ip=10.60.0.1" | ConvertFrom-Json | ConvertTo-Json
+    ```
+    
+    Expected Response:
+    ```json
+    {
+        "ip": "10.60.0.1",
+        "msisdn": "1234567890",
+        "source": "Mock/Fallback",
+        "supi": "imsi-208930000000003"
+    }
+    ```
 
-## Directory Structure
--   `docker-compose.yaml`: Service definitions.
--   `config/`: Configuration files for all NFs.
+## Step 6: Testing Additional APIs
+
+The Mini-NEF supports these additional endpoints. Full documentation is available in the **Swagger UI** (`/apidocs`).
+
+### 1. SIM Swap Check
+**Goal**: Check if a SIM card has been swapped recently.
+
+*   **Swagger**: `GET /sim-swap`
+*   **Parameters**: `msisdn` (query)
+
+```powershell
+curl.exe "http://localhost:9090/sim-swap?msisdn=1234567890" | ConvertFrom-Json | ConvertTo-Json
+```
+**Expected Output**:
+```json
+{
+    "last_swap_timestamp": "2024-01-01T12:00:00Z",
+    "msisdn": "1234567890",
+    "swapped": false
+}
+```
+
+### 2. Location API
+**Goal**: Retrieve the geolocation of a subscriber.
+
+*   **Swagger**: `GET /location`
+*   **Parameters**: `msisdn` (query)
+
+```powershell
+curl.exe "http://localhost:9090/location?msisdn=1234567890" | ConvertFrom-Json | ConvertTo-Json
+```
+**Expected Output**:
+```json
+{
+    "accuracy": 100,
+    "latitude": 40.7128,
+    "longitude": -74.006,
+    "msisdn": "1234567890",
+    "timestamp": "2024-01-01T12:00:00Z"
+}
+```
+
+### 3. Quality on Demand (QoD)
+**Goal**: Request a QoS session for an IP address.
+
+*   **Swagger**: `POST /qos/sessions`
+*   **Parameters**: JSON Body (`ueIpv4`, `qosProfile`, `duration`)
+
+**Command**:
+```powershell
+curl.exe -X POST -H "Content-Type: application/json" -d '{\"ueIpv4\": \"10.60.0.1\", \"qosProfile\": \"low-latency\"}' "http://localhost:9090/qos/sessions" | ConvertFrom-Json | ConvertTo-Json
+```
+**Expected Output** (Status 201 Created):
+```json
+{
+    "duration": 3600,
+    "qosProfile": "low-latency",
+    "sessionId": "qos-ses-12345",
+    "status": "active"
+}
+```

@@ -1,0 +1,67 @@
+I want to build a 5G core network using free5Gcore. Provide, a step-by-step guide on how to do it.
+I am using a windows 11 machine with docker desktop, so plan it without Kubernetes, or helm charts. it will be pure docker, docker compose.
+
+you can use any version of free5Gcore repository https://github.com/free5gc/free5gc 
+I use powershell as my terminal with administrator permissions.
+
+Modify all other NFs and commucation according to the new simple UPF. Also add ue and ran simulator container for test and simulations. write all build run exec and test commands . also add a network tool with which I will be able to listen to all network (if needed make those networks promiscous). Add network test triggering, and monitoring tcpdump etc., related commands to the guide.md. also add readme.md
+
+Core NFs: nrf, udr, pcf, udm, ausf, nssf, amf, smf, bsf.
+eUPF (replacing standard UPF).
+WebUI for management.
+UERANSIM: gnb and ue simulators.
+Network Monitor: A container with tcpdump attached to all networks for promiscuous monitoring.
+Networks: mgmt (management), n2 (AMF-gNB), n3 (gNB-UPF), n4 (SMF-UPF PFCP), n6 (UPF-data network).
+Volumes for configs and persistence.
+
+Remove standard UPF service (which requires GTP5G).
+Added eupf service with env vars from previous solution.
+SMF config (below) points to eUPF's PFCP (172.18.0.10:8805).
+UERANSIM services added for simulation.
+Network-monitor attached to all networks; run tcpdump inside it.
+All NFs use official free5gc images (build from source if needed; see guide.md).
+Networks are bridge for simplicity; promiscuous mode enabled via privileged
+
+
+Clone free5GC: `git clone https://github.com/free5gc/free5gc.git`
+
+To build all via compose (if you have a docker-compose-build.yaml): `docker compose -f docker-compose-build.yaml build`
+
+## Run Commands
+1. Enable IP forwarding in WSL: `sudo sysctl -w net.ipv4.ip_forward=1`
+2. Start all services: `docker compose up -d`
+3. Stop: `docker compose down`
+
+## Exec Commands
+- Enter a container: `docker exec -it <container_name> /bin/bash`
+  - Example: `docker exec -it free5gc-amf /bin/bash`
+- For network-monitor: `docker exec -it network-monitor /bin/bash`
+
+
+## Test Commands
+1. Verify services: `docker compose ps`
+2. Check logs: `docker logs <container_name>` (e.g., `docker logs eupf`)
+3. Register UE: In ue container: `docker exec ueransim-ue ./nr-ue -c /ueransim/config/free5gc-ue.yaml` (if not auto-run).
+4. Test PDU session: In ue shell: `ping -I uesimtun0 8.8.8.8`
+5. WebUI: Open http://localhost:5000 in browser; add subscribers if needed.
+
+## Network Monitoring and Test Triggering
+The network-monitor container is attached to all networks and privileged for promiscuous mode.
+
+1. Set promiscuous mode: In monitor shell: `ip link set <interface> promisc on` (e.g., eth0 for mgmt; list with `ip link`).
+2. Trigger traffic: Run UE ping as above to generate N3/N6 traffic.
+3. Monitor with tcpdump:
+   - All traffic on n3: `tcpdump -i <n3_interface> -nn -vv`
+   - GTP-U (N3): `tcpdump -i <n3_interface> udp port 2152`
+   - PFCP (N4): `tcpdump -i <n4_interface> udp port 8805`
+   - SCTP (N2): `tcpdump -i <n2_interface> sctp`
+   - Save capture: `tcpdump -i any -w capture.pcap` (copy out with `docker cp`).
+4. For real-time: Use `-c 100` to limit packets.
+
+## Troubleshooting
+- Check PFCP association: `docker logs smf` for eUPF connection.
+- If no data: Ensure NAT on host: `sudo iptables -t nat -A POSTROUTING -s 10.60.0.0/16 -o <wsl_iface> -j MASQUERADE`
+- Debug eBPF: `docker logs eupf`
+- Update configs and restart: `docker compose restart <service>`
+
+This setup simulates a full 5G network; extend for production as needed.
