@@ -168,3 +168,65 @@ curl.exe -X POST -H "Content-Type: application/json" -d '{\"ueIpv4\": \"10.60.0.
     "status": "active"
 }
 ```
+
+## Step 7: SMS Services (IMS-Lite)
+
+Since the core network lacks a native SMSF, we use an **IMS-Lite** approach (SIP MESSAGE) via the `mini-smsc` component.
+
+### Prerequisites
+*   Ensure **two** UEs are running (`ueransim-ue` and `ueransim-ue2`).
+*   Ensure both are provisioned via `python provision_subscriber.py`.
+*   Ensure `sip_client.py` is available (you may need to copy it into the container or likely just type the commands if python is present).
+
+### 1. P2P SMS (UE1 ↔ UE2)
+
+**Scenario**: UE1 (`1234567891`) sends a message to UE2 (`1234567892`).
+
+1.  **Prepare UE1 (User A)**:
+    Open a terminal:
+    ```bash
+    # Copy script to container (if mostly text, or use docker cp)
+    docker cp sip_client.py ueransim-ue:/app/sip_client.py
+    
+    # Enter UE1
+    docker exec -it ueransim-ue bash
+    # (Inside UE) Install python if missing
+    apt-get update && apt-get install -y python3
+    
+    # Register UE1 (Bind to its tunnel IP, usually 10.60.0.1)
+    python3 sip_client.py register --sip-user 1234567891 --local-ip 10.60.0.1
+    ```
+
+2.  **Prepare UE2 (User B)**:
+    Open a second terminal:
+    ```bash
+    docker cp sip_client.py ueransim-ue2:/app/sip_client.py
+    
+    docker exec -it ueransim-ue2 bash
+    # (Inside UE2)
+    apt-get update && apt-get install -y python3
+    
+    # Register UE2 (Bind to its tunnel IP, usually 10.60.0.2)
+    python3 sip_client.py register --sip-user 1234567892 --local-ip 10.60.0.2
+    
+    # Start Listening
+    python3 sip_client.py listen --local-ip 10.60.0.2
+    ```
+
+3.  **Send Message (UE1 -> UE2)**:
+    Back in **UE1** terminal:
+    ```bash
+    python3 sip_client.py send --sip-user 1234567891 --to 1234567892 --msg "Hello from User A!"
+    ```
+    *   **Result**: You should see the message appear in the **UE2** terminal listener.
+
+### 2. A2P SMS (Application ↔ UE1)
+
+**Scenario**: Send a marketing message from the API to UE1.
+
+1.  **Ensure UE1 is Registered** (see above).
+2.  **Send via API** (from Host):
+    ```powershell
+    curl -X POST -H "Content-Type: application/json" -d '{\"to\": \"1234567891\", \"body\": \"Your OTP is 9999\", \"from\": \"Bank\"}' "http://localhost:9090/sms/send"
+    ```
+3.  **Verify**: Check UE1 listener or logs.

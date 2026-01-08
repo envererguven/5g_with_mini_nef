@@ -245,6 +245,22 @@ services:
     depends_on:
       - ueransim-gnb
 
+  ueransim-ue2:
+    container_name: ueransim-ue2
+    image: free5gc/ueransim:latest
+    command: ./nr-ue -c ./config/uecfg2.yaml
+    volumes:
+      - ./config/uecfg2.yaml:/ueransim/config/uecfg2.yaml
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - "/dev/net/tun"
+    networks:
+      n2: 
+      n3: 
+    depends_on:
+      - ueransim-gnb
+
   # ==========================================
   # Network Monitor
   # ==========================================
@@ -258,6 +274,23 @@ services:
     # Note: Attaching to eUPF gives visibility into N3, N4, N6. 
     # To see N2 (AMF-gNB), we might need another monitor or attach to AMF.
     # For simplicity, attaching to eUPF covers the most critical data plane traffic.
+
+  # ==========================================
+  # SMS Service (IMS-Lite / Mini-SMSC)
+  # ==========================================
+  mini-smsc:
+    container_name: mini-smsc
+    build: ./mini_smsc
+    ports:
+      - "9091:9091" # API Port
+      - "5060:5060/udp" # SIP Port (Host mapped for debugging)
+    networks:
+      mgmt: # To talk to UDM
+      n6:   # To talk to UEs
+        ipv4_address: 172.18.4.30
+    depends_on:
+      - db
+      - free5gc-udm
 
   # ==========================================
   # Northbound API (Mini-NEF)

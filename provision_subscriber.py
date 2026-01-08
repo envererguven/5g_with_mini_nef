@@ -1,28 +1,42 @@
 import requests
 import json
+import time
 
 # Configuration
 WEBUI_URL = "http://localhost:5000"
 API_ROOT = f"{WEBUI_URL}/api"
 
-# Sample Subscriber Data (Matching config/uecfg.yaml typically)
-IMSI = "208930000000004"
-MSISDN = "1234567891"  # The golden value we want to retrieve
 OP_KEY = "8e27b6af487340f2ac63df" # Default Free5GC
 KEY = "8baf473f2f8fd09487cccbd7097c6862"
 
-def login():
-    # Attempt login to internal API (if auth required, default often skips or use admin/free5gc)
-    # Most Free5GC WebUI internal APIs might be open or use token.
-    # We'll try posting directly to subscriber endpoint.
-    pass
+SUBSCRIBERS = [
+    {"imsi": "208930000000003", "msisdn": "1234567891", "name": "UE1"},
+    {"imsi": "208930000000004", "msisdn": "1234567892", "name": "UE2"}
+]
 
-def provision_subscriber():
-    print(f"Provisioning Subscriber {IMSI} with MSISDN {MSISDN}...")
+def login():
+    session = requests.Session()
+    try:
+        login_resp = session.post(f"{WEBUI_URL}/api/login", json={"username": "admin", "password": "free5gc"})
+        if login_resp.status_code == 200:
+             print("Login successful.")
+             token = login_resp.json().get("token")
+             return session, {"Authorization": f"Bearer {token}"}
+    except Exception:
+        pass
+    print("Login failed or not needed, trying without auth...")
+    return session, {}
+
+def provision_subscriber(session, headers, sub):
+    imsi = sub['imsi']
+    msisdn = sub['msisdn']
+    name = sub['name']
+    
+    print(f"[{name}] Provisioning IMSI {imsi} (MSISDN {msisdn})...")
 
     ue_data = {
         "plmnID": "20893",
-        "ueId": f"imsi-{IMSI}",
+        "ueId": f"imsi-{imsi}",
         "AuthenticationSubscription": {
             "authenticationManagementField": "8000",
             "authenticationMethod": "5G_AKA",
@@ -36,7 +50,7 @@ def provision_subscriber():
             "opc": {
                 "encryptionAlgorithm": 0,
                 "encryptionKey": 0,
-                "opValue": "981d464c7c52eb6e5036234984ad0bcf" # Derived from OP often
+                "opValue": "981d464c7c52eb6e5036234984ad0bcf" 
             },
             "permanentKey": {
                 "encryptionAlgorithm": 0,
@@ -47,7 +61,7 @@ def provision_subscriber():
         },
         "AccessAndMobilitySubscriptionData": {
             "gpsis": [
-                f"msisdn-{MSISDN}"
+                f"msisdn-{msisdn}"
             ],
             "nssai": {
                 "defaultSingleNssais": [
@@ -83,36 +97,37 @@ def provision_subscriber():
         ]
     }
 
-    # Free5GC WebUI API Endpoint to add subscriber
-    url = f"{WEBUI_URL}/api/subscriber/imsi-{IMSI}/20893"
+    url = f"{WEBUI_URL}/api/subscriber/imsi-{imsi}/20893"
     
     try:
-        # Note: This checks availability. In a real script we might need to authenticate first 
-        # via POST /api/login {username: admin, password: free5gc} -> Token
-        
-        # Step 1: Login
-        session = requests.Session()
-        login_resp = session.post(f"{WEBUI_URL}/api/login", json={"username": "admin", "password": "free5gc"})
-        if login_resp.status_code == 200:
-             print("Login successful.")
-             token = login_resp.json().get("token")
-             headers = {"Authorization": f"Bearer {token}"}
-        else:
-             print("Login failed, trying without auth (older versions)...")
-             headers = {}
-
-        # Step 2: Post Data
-        # Note: API structure varies by version. Using commonly observed payload.
         resp = session.post(url, json=ue_data, headers=headers)
-        
         if resp.status_code in [200, 201]:
-            print("✅ Subscriber provisioned successfully!")
+            print(f"[OK] {name} provisioned successfully!")
+        elif resp.status_code == 401:
+             print(f"[INFO] 401 Unauthorized. Retrying without auth header...")
+             resp = session.post(url, json=ue_data) # Try without headers
+             if resp.status_code in [200, 201]:
+                 print(f"[OK] {name} provisioned (no-auth).")
+             else:
+                 print(f"[FAIL] Retry failed: {resp.status_code} - {resp.text}")
         else:
-            print(f"❌ Failed to provision: {resp.status_code} - {resp.text}")
+            # If 409 conflict (already exists), we can try PUT or just ignore
+            if resp.status_code == 409 or "exist" in resp.text:
+                 # Try PUT to update
+                 print(f"[INFO] {name} exists. Updating...")
+                 resp = session.put(url, json=ue_data, headers=headers)
+                 if resp.status_code in [200, 204]:
+                     print(f"[OK] {name} updated.")
+                 else:
+                     print(f"[FAIL] Failed to update {name}: {resp.status_code}")
+            else:
+                print(f"[FAIL] Failed to provision {name}: {resp.status_code} - {resp.text}")
 
     except Exception as e:
-        print(f"❌ Error connecting to WebUI: {e}")
-        print("Ensure 'free5gc-webui' container is running.")
+        print(f"[FAIL] Error connecting to WebUI: {e}")
 
 if __name__ == "__main__":
-    provision_subscriber()
+    session, headers = login()
+    for sub in SUBSCRIBERS:
+        provision_subscriber(session, headers, sub)
+        time.sleep(1)

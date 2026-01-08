@@ -225,5 +225,84 @@ def create_qos_session():
         "duration": data.get('duration', 3600)
     }), 201
 
+
+# ==========================================
+# SMS API (Proxy to Mini-SMSC)
+# ==========================================
+
+@app.route('/sms/send', methods=['POST'])
+def send_sms():
+    """
+    Send an A2P SMS
+    ---
+    tags:
+      - SMS
+    parameters:
+      - name: body
+        in: body
+        required: true
+        schema:
+          type: object
+          properties:
+            to:
+              type: string
+              description: Recipient MSISDN or SIP URI
+              example: "1234567891"
+            body:
+              type: string
+              description: Message content
+              example: "Your OTP is 1234"
+            from:
+              type: string
+              description: Sender ID (optional)
+              example: "MyApp"
+    responses:
+      200:
+        description: SMS Sent Successfully
+      404:
+        description: Recipient not found/offline
+      500:
+        description: Internal SMSC Error
+    """
+    # Proxy to mini-smsc
+    SMSC_URL = "http://mini-smsc:9091/sms/send"
+    try:
+        resp = requests.post(SMSC_URL, json=request.json, timeout=2)
+        return jsonify(resp.json()), resp.status_code
+    except Exception as e:
+        return jsonify({"error": "Failed to contact SMSC", "details": str(e)}), 500
+
+@app.route('/sms/messages', methods=['GET'])
+def get_sms_messages():
+    """
+    Retrieve All SMS Messages (Debug/Inbox)
+    ---
+    tags:
+      - SMS
+    responses:
+      200:
+        description: List of stored messages by user
+        schema:
+          type: object
+          additionalProperties:
+             type: array
+             items:
+               type: object
+               properties:
+                 from:
+                   type: string
+                 body:
+                   type: string
+                 time:
+                   type: string
+    """
+    # Proxy to mini-smsc
+    SMSC_URL = "http://mini-smsc:9091/sms/messages"
+    try:
+        resp = requests.get(SMSC_URL, timeout=2)
+        return jsonify(resp.json()), resp.status_code
+    except Exception as e:
+        return jsonify({"error": "Failed to contact SMSC", "details": str(e)}), 500
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=9090)
